@@ -6,7 +6,8 @@
 
 import json
 from typing import List, Dict, Any
-from langchain_core.messages import BaseMessage, HumanMessage, AIMessage
+from langchain.messages import HumanMessage, AIMessage
+from langchain_core.messages import BaseMessage
 from langchain_core.language_models import BaseLLM
 
 
@@ -20,6 +21,22 @@ class MemoryExtractor:
             llm: 语言模型实例
         """
         self.llm = llm
+    
+    @staticmethod
+    def _llm_to_str(result) -> str:
+        """安全地从 LLM 返回值中提取文本，清理思考标签"""
+        import re
+        if isinstance(result, str):
+            text = result
+        elif hasattr(result, 'content'):
+            text = str(result.content)
+        elif hasattr(result, 'text'):
+            text = str(result.text)
+        else:
+            text = str(result)
+        text = re.sub(r'<think>[\s\S]*?</think>', '', text).strip()
+        text = re.sub(r'</think>', '', text).strip()
+        return text
     
     def extract_preferences_from_conversation(
         self, 
@@ -63,9 +80,8 @@ class MemoryExtractor:
 """
         
         try:
-            response = self.llm.invoke(prompt).strip()
+            response = self._llm_to_str(self.llm.invoke(prompt)).strip()
             
-            # 尝试解析JSON
             # 清理可能的代码块标记
             if "```json" in response:
                 response = response.split("```json")[1].split("```")[0].strip()
@@ -122,7 +138,7 @@ confidence是置信度（0-1），根据对话中该知识的明确程度评估�
 """
         
         try:
-            response = self.llm.invoke(prompt).strip()
+            response = self._llm_to_str(self.llm.invoke(prompt)).strip()
             
             # 清理可能的代码块标记
             if "```json" in response:

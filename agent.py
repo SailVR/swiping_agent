@@ -16,8 +16,8 @@ import os
 import uuid
 from typing import Dict, Any
 
-from langchain_community.llms import Tongyi
-from langchain_core.language_models import BaseLLM
+from langchain_openai import ChatOpenAI
+from langchain_core.language_models import BaseLLM, BaseChatModel
 import yaml
 
 from agents import MasterAgent
@@ -47,13 +47,18 @@ class MultiAgentSystem:
         memory_db_path = memory_config.get("long_term_db", "./data/long_term_memory.db")
         short_term_max_tokens = memory_config.get("short_term_max_tokens", 1000)
         
-        # 初始化主智能体（内部会初始化两个子智能体）
+        # 联网搜索配置
+        search_config = self.config.get("search", {})
+        tavily_api_key = search_config.get("tavily_api_key", "")
+        
+        # 初始化主智能体（内部会初始化三个子智能体：SQL、Analysis、Search）
         self.master_agent = MasterAgent(
             llm=self.llm,
             db_path=self.db_path,
             num_examples=self.config["nl2sql"]["num_examples"],
             memory_db_path=memory_db_path,
-            short_term_max_tokens=short_term_max_tokens
+            short_term_max_tokens=short_term_max_tokens,
+            tavily_api_key=tavily_api_key
         )
         
         # 用户登录状态
@@ -75,16 +80,26 @@ class MultiAgentSystem:
         
         return replace_env_vars(config)
     
-    def _init_llm(self) -> BaseLLM:
-        """初始化语言模型"""
+    def _init_llm(self) -> BaseChatModel:
+        """初始化语言模型
+        
+        使用 OpenAI 兼容接口连接 DashScope，支持所有通义千问模型
+        （qwen-turbo-latest / qwen-plus-latest / qwen-max-latest / qwen3.5-plus 等）
+        """
         llm_config = self.config["llm"]
         
         if llm_config["provider"] == "dashscope":
-            return Tongyi(
+            base_url = llm_config.get(
+                "base_url",
+                "https://dashscope.aliyuncs.com/compatible-mode/v1"
+            )
+            return ChatOpenAI(
                 model=llm_config["model"],
+                api_key=llm_config["api_key"],
+                base_url=base_url,
                 temperature=llm_config["temperature"],
                 max_tokens=llm_config["max_tokens"],
-                dashscope_api_key=llm_config["api_key"]
+                streaming=True,
             )
         else:
             raise ValueError(f"Unsupported LLM provider: {llm_config['provider']}")
@@ -111,7 +126,7 @@ class MultiAgentSystem:
             return False
     
     def query(self, question: str) -> str:
-        """执行查询
+        """执行查询（阻塞式，返回完整回答）
         
         Args:
             question: 用户问题
@@ -122,11 +137,33 @@ class MultiAgentSystem:
         if not self.user_id:
             return "请先登录。您可以输入任意用户ID开始使用。"
         
-        # 生成thread_id: user_id_session_id
         thread_id = f"{self.user_id}_{self.session_id}"
         
         return self.master_agent.query(
             question, 
+            thread_id=thread_id,
+            user_id=self.user_id
+        )
+    
+    def stream_query(self, question: str):
+        """流式查询，返回 SSE 事件生成器
+        
+        Args:
+            question: 用户问题
+            
+        Yields:
+            SSE 格式字符串
+        """
+        if not self.user_id:
+            import json
+            yield f"data: {json.dumps({'type': 'chunk', 'content': '请先登录。'}, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps({'type': 'done', 'answer': '请先登录。'})}\n\n"
+            return
+        
+        thread_id = f"{self.user_id}_{self.session_id}"
+        
+        yield from self.master_agent.stream_query(
+            question,
             thread_id=thread_id,
             user_id=self.user_id
         )

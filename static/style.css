@@ -927,6 +927,127 @@ body {
     background: var(--border-color);
 }
 
+/* ===== 流式消息 - 状态提示 ===== */
+.stream-status {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 6px 0;
+    color: var(--text-secondary);
+    font-size: 13px;
+}
+
+.stream-status .status-text {
+    font-style: italic;
+}
+
+/* ===== SQL 展开详情 ===== */
+.sql-details {
+    margin: 8px 0;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    overflow: hidden;
+    background: var(--bg-tertiary);
+}
+
+.sql-details summary {
+    padding: 8px 14px;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-secondary);
+    user-select: none;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    list-style: none;
+}
+
+.sql-details summary::-webkit-details-marker { display: none; }
+
+.sql-details summary::before {
+    content: '▶';
+    font-size: 10px;
+    transition: transform 0.2s;
+    display: inline-block;
+}
+
+.sql-details[open] summary::before {
+    transform: rotate(90deg);
+}
+
+.sql-details pre {
+    margin: 0;
+    padding: 12px 14px;
+    background: #1e1e2e;
+    border-top: 1px solid var(--border-color);
+    font-size: 13px;
+    overflow-x: auto;
+}
+
+.sql-details code {
+    font-family: 'Consolas', 'Fira Code', monospace;
+}
+
+/* SQL 纠错次数徽章 */
+.retry-badge {
+    display: inline-flex;
+    align-items: center;
+    background: #fef3c7;
+    color: #92400e;
+    border: 1px solid #fde68a;
+    border-radius: 4px;
+    padding: 1px 6px;
+    font-size: 11px;
+    font-weight: 600;
+    margin-left: 6px;
+}
+
+/* ===== 联网搜索来源 ===== */
+.stream-sources {
+    margin: 8px 0;
+    padding: 10px 12px;
+    background: linear-gradient(135deg, rgba(102, 126, 234, 0.06), rgba(118, 75, 162, 0.06));
+    border: 1px solid rgba(102, 126, 234, 0.2);
+    border-radius: 8px;
+    font-size: 12px;
+}
+
+.sources-header {
+    font-weight: 600;
+    color: var(--text-secondary);
+    margin-bottom: 6px;
+}
+
+.sources-list {
+    margin: 0;
+    padding-left: 16px;
+    list-style: none;
+}
+
+.sources-list li {
+    padding: 2px 0;
+}
+
+.sources-list a {
+    color: var(--primary-color);
+    text-decoration: none;
+    font-size: 12px;
+}
+
+.sources-list a:hover {
+    text-decoration: underline;
+}
+
+/* ===== ECharts 图表容器 ===== */
+.stream-chart {
+    margin: 12px 0 4px;
+    border-radius: 10px;
+    overflow: hidden;
+    border: 1px solid var(--border-color);
+    background: var(--bg-secondary);
+}
+
 /* ===== 响应式设计 ===== */
 @media (max-width: 768px) {
     .sidebar {

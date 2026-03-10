@@ -1,12 +1,13 @@
 """
 Flask Web API for Multi-Agent Data Query System
-提供RESTful API接口供前端调用
+提供RESTful API接口供前端调用，支持普通查询和流式SSE查询。
 """
 
-from flask import Flask, request, jsonify, send_from_directory
+from flask import Flask, request, jsonify, send_from_directory, Response, stream_with_context
 from flask_cors import CORS
 import os
 import sys
+import json
 from typing import Dict, Any
 
 # 将当前目录添加到Python路径
@@ -152,12 +153,72 @@ def user_info():
         }), 500
 
 
+@app.route('/api/query_stream', methods=['POST'])
+def query_stream():
+    """流式查询接口（Server-Sent Events）
+    
+    前端使用 fetch + ReadableStream 接收，实现逐字打字效果。
+    事件类型：
+      - status: 处理状态更新（如"正在查询数据库..."）
+      - intent: 识别到的意图类型
+      - sql: 生成的SQL语句（含重试次数）
+      - sources: 联网搜索来源URL列表
+      - chart: ECharts图表配置JSON
+      - chunk: LLM输出的文字片段（流式）
+      - error: 错误信息（非致命，继续处理）
+      - done: 流结束标志（含完整answer）
+    """
+    try:
+        data = request.json
+        user_id = data.get('user_id', 'guest')
+        question = data.get('question', '')
+        
+        if not question.strip():
+            return jsonify({'success': False, 'error': '问题不能为空'}), 400
+        
+        system = get_or_create_system(user_id)
+        
+        def generate():
+            try:
+                for event in system.stream_query(question):
+                    yield event
+            except Exception as e:
+                yield f"data: {json.dumps({'type': 'error', 'message': str(e)}, ensure_ascii=False)}\n\n"
+                yield f"data: {json.dumps({'type': 'done', 'answer': f'系统错误: {str(e)}'})}\n\n"
+        
+        return Response(
+            stream_with_context(generate()),
+            mimetype='text/event-stream',
+            headers={
+                'Cache-Control': 'no-cache',
+                'X-Accel-Buffering': 'no',
+                'Connection': 'keep-alive'
+            }
+        )
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
 @app.route('/api/health', methods=['GET'])
 def health():
     """健康检查接口"""
+    search_available = False
+    try:
+        if user_systems:
+            first_system = next(iter(user_systems.values()))
+            search_available = first_system.master_agent.search_agent.available
+    except Exception:
+        pass
+    
     return jsonify({
         'status': 'healthy',
-        'active_users': len(user_systems)
+        'active_users': len(user_systems),
+        'features': {
+            'sql_self_correction': True,
+            'streaming': True,
+            'web_search': search_available,
+            'data_visualization': True
+        }
     })
 
 

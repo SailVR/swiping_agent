@@ -2,14 +2,17 @@
 主智能体
 
 负责意图识别、任务路由、协调子智能体和结果汇总。
+支持6种意图：simple_answer / sql_only / analysis_only / sql_and_analysis / web_search / search_and_sql
 """
 
-from typing import TypedDict, Sequence, Dict, Any, Optional, Annotated
+import json
+from typing import TypedDict, Sequence, Dict, Any, Optional, Annotated, Generator
 from pathlib import Path
 
 from langgraph.graph import StateGraph, END, add_messages
 from langgraph.checkpoint.memory import MemorySaver
-from langchain_core.messages import BaseMessage, HumanMessage, AIMessage
+from langchain.messages import HumanMessage, AIMessage
+from langchain_core.messages import BaseMessage
 from langchain_core.language_models import BaseLLM
 
 import sys
@@ -17,6 +20,7 @@ sys.path.append(str(Path(__file__).parent.parent))
 from prompts import get_master_intent_prompt, get_summary_prompt
 from agents.sql_agent import SQLQueryAgent
 from agents.analysis_agent import DataAnalysisAgent
+from agents.search_agent import WebSearchAgent
 from memory.long_term_memory import LongTermMemory
 from memory.memory_extractor import MemoryExtractor
 
@@ -28,6 +32,7 @@ class MasterAgentState(TypedDict):
     intent: Optional[str]
     sql_result: Optional[Dict[str, Any]]
     analysis_result: Optional[Dict[str, Any]]
+    search_result: Optional[Dict[str, Any]]
     final_answer: Optional[str]
     error: Optional[str]
     metadata: Dict[str, Any]
@@ -36,9 +41,30 @@ class MasterAgentState(TypedDict):
 class MasterAgent:
     """主智能体 - 协调SQL查询和数据分析子智能体"""
     
+    @staticmethod
+    def _llm_to_str(result) -> str:
+        """安全地从 LLM 返回值中提取文本字符串
+        
+        兼容 str / AIMessage / GenerationChunk 等多种返回类型。
+        自动清理思考型模型（如 qwen3.5-plus）的 <think>...</think> 标签。
+        """
+        import re
+        if isinstance(result, str):
+            text = result
+        elif hasattr(result, 'content'):
+            text = str(result.content)
+        elif hasattr(result, 'text'):
+            text = str(result.text)
+        else:
+            text = str(result)
+        text = re.sub(r'<think>[\s\S]*?</think>', '', text).strip()
+        text = re.sub(r'</think>', '', text).strip()
+        return text
+    
     def __init__(self, llm: BaseLLM, db_path: str, num_examples: int = 3, 
                 memory_db_path: str = "./data/long_term_memory.db",
-                short_term_max_tokens: int = 1000):
+                short_term_max_tokens: int = 1000,
+                tavily_api_key: str = ""):
         """初始化主智能体
         
         Args:
@@ -47,6 +73,7 @@ class MasterAgent:
             num_examples: Few-shot示例数量
             memory_db_path: 长期记忆数据库路径
             short_term_max_tokens: 短期记忆最大token数
+            tavily_api_key: Tavily 搜索 API Key
         """
         self.llm = llm
         self.db_path = db_path
@@ -55,6 +82,7 @@ class MasterAgent:
         # 初始化子智能体
         self.sql_agent = SQLQueryAgent(llm, db_path, num_examples)
         self.analysis_agent = DataAnalysisAgent(llm)
+        self.search_agent = WebSearchAgent(llm, tavily_api_key=tavily_api_key)
         
         # 初始化短期记忆（MemorySaver）
         self.memory = MemorySaver()
@@ -72,7 +100,7 @@ class MasterAgent:
         self.graph = self._build_graph()
     
     def _build_graph(self) -> StateGraph:
-        """构建LangGraph状态图"""
+        """构建LangGraph状态图（支持6种意图路由）"""
         workflow = StateGraph(MasterAgentState)
         
         # 添加节点
@@ -81,12 +109,14 @@ class MasterAgent:
         workflow.add_node("call_sql", self._call_sql_node)
         workflow.add_node("call_analysis", self._call_analysis_node)
         workflow.add_node("call_both", self._call_both_node)
+        workflow.add_node("call_web_search", self._call_web_search_node)
+        workflow.add_node("call_search_and_sql", self._call_search_and_sql_node)
         workflow.add_node("summarize", self._summarize_node)
         
         # 设置入口
         workflow.set_entry_point("intent")
         
-        # 添加条件边 - 从意图识别到不同的处理节点
+        # 添加条件边 - 从意图识别到不同的处理节点（6种意图）
         workflow.add_conditional_edges(
             "intent",
             self._route_after_intent,
@@ -94,7 +124,9 @@ class MasterAgent:
                 "simple_answer": "simple_answer",
                 "sql_only": "call_sql",
                 "analysis_only": "call_analysis",
-                "sql_and_analysis": "call_both"
+                "sql_and_analysis": "call_both",
+                "web_search": "call_web_search",
+                "search_and_sql": "call_search_and_sql"
             }
         )
         
@@ -103,6 +135,8 @@ class MasterAgent:
         workflow.add_edge("call_sql", "summarize")
         workflow.add_edge("call_analysis", "summarize")
         workflow.add_edge("call_both", "summarize")
+        workflow.add_edge("call_web_search", "summarize")
+        workflow.add_edge("call_search_and_sql", "summarize")
         workflow.add_edge("summarize", END)
         
         # 使用MemorySaver作为checkpointer
@@ -183,7 +217,7 @@ class MasterAgent:
 总结："""
         
         try:
-            summary = self.llm.invoke(prompt).strip()
+            summary = self._llm_to_str(self.llm.invoke(prompt)).strip()
             return f"[对话历史总结]\n{summary}"
         except Exception as e:
             print(f"压缩对话历史失败: {e}")
@@ -221,7 +255,7 @@ class MasterAgent:
         return "\n\n".join(context_parts) if context_parts else ""
     
     def _intent_node(self, state: MasterAgentState) -> MasterAgentState:
-        """意图识别节点"""
+        """意图识别节点（支持6种意图）"""
         question = state["user_question"]
         user_id = state["metadata"].get("user_id")
         
@@ -241,21 +275,19 @@ class MasterAgent:
         prompt = get_master_intent_prompt(question, conversation_history, user_context)
         
         try:
-            response = self.llm.invoke(prompt).strip()
-            
-            # 清理响应，提取意图
+            response = self._llm_to_str(self.llm.invoke(prompt)).strip()
             intent = response.lower().strip()
             
-            # 验证意图是否有效
-            valid_intents = ["simple_answer", "sql_only", "analysis_only", "sql_and_analysis"]
+            valid_intents = [
+                "simple_answer", "sql_only", "analysis_only",
+                "sql_and_analysis", "web_search", "search_and_sql"
+            ]
             if intent not in valid_intents:
-                # 如果LLM返回的不是有效选项，尝试从响应中提取
                 for valid_intent in valid_intents:
                     if valid_intent in intent:
                         intent = valid_intent
                         break
                 else:
-                    # 默认为sql_only
                     intent = "sql_only"
             
             state["intent"] = intent
@@ -268,8 +300,17 @@ class MasterAgent:
         return state
     
     def _route_after_intent(self, state: MasterAgentState) -> str:
-        """意图识别后的路由"""
-        return state.get("intent", "simple_answer")
+        """意图识别后的路由（支持6种意图）"""
+        intent = state.get("intent", "simple_answer")
+        # 如果 web_search/search_and_sql 但搜索不可用，降级为 simple_answer
+        if intent in ("web_search", "search_and_sql") and not self.search_agent.available:
+            print("[路由] 搜索智能体不可用，意图降级为 simple_answer")
+            state["final_answer"] = (
+                "联网搜索功能暂未启用。请配置 TAVILY_API_KEY 环境变量后重启系统。\n"
+                "申请地址：https://tavily.com（免费账户即可）"
+            )
+            return "simple_answer"
+        return intent
     
     def _simple_answer_node(self, state: MasterAgentState) -> MasterAgentState:
         """简单回答节点"""
@@ -358,23 +399,19 @@ class MasterAgent:
         question = state["user_question"]
         thread_id = state["metadata"].get("thread_id", "default")
         
-        # 第一步：SQL查询
         try:
             sql_result = self.sql_agent.query(question)
             state["sql_result"] = sql_result
             state["metadata"]["sql_result"] = sql_result
             
-            # 保存到会话数据存储
             if thread_id not in self.session_data:
                 self.session_data[thread_id] = {}
             self.session_data[thread_id]["last_sql_result"] = sql_result
             
-            # 检查SQL查询是否成功
             if sql_result.get("error"):
                 state["error"] = f"SQL查询失败: {sql_result['error']}"
                 return state
             
-            # 第二步：数据分析
             if sql_result.get("data"):
                 analysis_result = self.analysis_agent.analyze(sql_result["data"], question)
                 state["analysis_result"] = analysis_result
@@ -390,36 +427,111 @@ class MasterAgent:
         
         return state
     
-    def _summarize_node(self, state: MasterAgentState) -> MasterAgentState:
-        """汇总结果节点"""
+    def _call_web_search_node(self, state: MasterAgentState) -> MasterAgentState:
+        """联网搜索节点（纯搜索模式）"""
         question = state["user_question"]
         
-        # 检查是否有错误
-        if state.get("error"):
-            state["final_answer"] = f"抱歉，处理过程中出现错误：{state['error']}"
+        try:
+            search_result = self.search_agent.search(question)
+            state["search_result"] = search_result
+            state["metadata"]["search_result"] = search_result
+            
+            if search_result.get("error"):
+                state["error"] = search_result["error"]
+                
+        except Exception as e:
+            state["error"] = f"联网搜索失败: {str(e)}"
+        
+        return state
+    
+    def _call_search_and_sql_node(self, state: MasterAgentState) -> MasterAgentState:
+        """联网搜索 + 数据库查询联合分析节点"""
+        question = state["user_question"]
+        thread_id = state["metadata"].get("thread_id", "default")
+        
+        try:
+            # 先查数据库
+            sql_result = self.sql_agent.query(question)
+            state["sql_result"] = sql_result
+            state["metadata"]["sql_result"] = sql_result
+            
+            if thread_id not in self.session_data:
+                self.session_data[thread_id] = {}
+            self.session_data[thread_id]["last_sql_result"] = sql_result
+            
+            # 再联网搜索 + 联合分析
+            sql_data = sql_result.get("data", "{}") or "{}"
+            search_result = self.search_agent.search_and_compare(question, sql_data)
+            state["search_result"] = search_result
+            state["metadata"]["search_result"] = search_result
+            
+            if search_result.get("error") and not sql_result.get("error"):
+                state["error"] = search_result["error"]
+                
+        except Exception as e:
+            state["error"] = f"联合分析失败: {str(e)}"
+        
+        return state
+    
+    def _summarize_node(self, state: MasterAgentState) -> MasterAgentState:
+        """汇总结果节点（支持搜索结果和图表元数据）"""
+        question = state["user_question"]
+        intent = state.get("intent", "sql_only")
+        
+        # 预设回答已经生成（如降级处理）
+        if state.get("final_answer"):
+            state["messages"] = list(state["messages"]) + [AIMessage(content=state["final_answer"])]
             return state
         
-        # 获取SQL结果和分析结果
+        if state.get("error"):
+            state["final_answer"] = f"抱歉，处理过程中出现错误：{state['error']}"
+            state["messages"] = list(state["messages"]) + [AIMessage(content=state["final_answer"])]
+            return state
+        
         sql_result = state.get("sql_result")
         analysis_result = state.get("analysis_result")
+        search_result = state.get("search_result")
         
-        # 准备汇总数据
+        # 联网搜索相关意图：搜索智能体已生成完整回答
+        if intent in ("web_search", "search_and_sql") and search_result:
+            if search_result.get("error"):
+                state["final_answer"] = f"搜索出错：{search_result['error']}"
+            else:
+                answer = search_result.get("answer", "未能获取搜索结果")
+                sources = search_result.get("sources", [])
+                if sources:
+                    sources_text = "\n\n**参考来源：**\n" + "\n".join(
+                        f"- {url}" for url in sources[:5]
+                    )
+                    answer = answer + sources_text
+                state["final_answer"] = answer
+                # 将图表元数据附加在 metadata 中供前端使用
+                if search_result.get("chart"):
+                    state["metadata"]["chart"] = search_result["chart"]
+            state["messages"] = list(state["messages"]) + [AIMessage(content=state["final_answer"])]
+            return state
+        
+        # 数据库查询/分析相关意图
         sql_data = None
         analysis_data = None
         
         if sql_result:
             if sql_result.get("error"):
                 state["final_answer"] = f"查询出错：{sql_result['error']}"
+                state["messages"] = list(state["messages"]) + [AIMessage(content=state["final_answer"])]
                 return state
             sql_data = sql_result.get("data")
         
         if analysis_result:
             if analysis_result.get("error"):
                 state["final_answer"] = f"分析出错：{analysis_result['error']}"
+                state["messages"] = list(state["messages"]) + [AIMessage(content=state["final_answer"])]
                 return state
             analysis_data = analysis_result.get("analysis")
+            # 将图表配置存入 metadata，流式接口和前端可读取
+            if analysis_result.get("chart"):
+                state["metadata"]["chart"] = analysis_result["chart"]
         
-        # 使用LLM生成自然语言汇总
         try:
             prompt = get_summary_prompt(
                 question=question,
@@ -427,11 +539,9 @@ class MasterAgent:
                 analysis_result=analysis_data
             )
             
-            answer = self.llm.invoke(prompt)
+            answer = self._llm_to_str(self.llm.invoke(prompt))
             state["final_answer"] = answer
-            
-            # 将AI回答添加到messages中，这样会被checkpointer保存
-            state["messages"] = state["messages"] + [AIMessage(content=answer)]
+            state["messages"] = list(state["messages"]) + [AIMessage(content=answer)]
             
         except Exception as e:
             state["final_answer"] = f"生成回答时出错：{str(e)}"
@@ -455,6 +565,7 @@ class MasterAgent:
             "intent": None,
             "sql_result": None,
             "analysis_result": None,
+            "search_result": None,
             "final_answer": None,
             "error": None,
             "metadata": {
@@ -482,25 +593,17 @@ class MasterAgent:
         return answer
     
     def _extract_and_save_memory(self, messages: Sequence[BaseMessage], user_id: str):
-        """自动提取并保存长期记忆
-        
-        Args:
-            messages: 对话消息列表
-            user_id: 用户ID
-        """
+        """自动提取并保存长期记忆"""
         try:
-            # 只在对话达到一定长度时才提取
             if not self.memory_extractor.should_extract(messages, threshold=6):
                 return
             
-            # 提取用户偏好
             preferences = self.memory_extractor.extract_preferences_from_conversation(
                 messages, user_id
             )
             for key, value in preferences.items():
                 self.long_term_memory.save_preference(user_id, key, str(value))
             
-            # 提取用户知识
             knowledge_list = self.memory_extractor.extract_knowledge_from_conversation(
                 messages, user_id
             )
@@ -513,4 +616,243 @@ class MasterAgent:
                 )
         except Exception as e:
             print(f"提取记忆失败: {e}")
+    
+    def stream_query(
+        self,
+        question: str,
+        thread_id: str = "default",
+        user_id: Optional[str] = None
+    ) -> Generator[str, None, None]:
+        """流式查询，以 SSE 格式生成事件流
+        
+        使用 LangGraph 的 graph.stream() 在每个节点完成后推送状态更新，
+        最终 LLM 汇总回答以流式方式逐字输出。
+        
+        Yields:
+            SSE 格式字符串：data: {...}\\n\\n
+        """
+        def sse(type_: str, **kwargs) -> str:
+            return f"data: {json.dumps({'type': type_, **kwargs}, ensure_ascii=False)}\n\n"
+        
+        # --- 意图识别（直接调用，以便立即推送状态）---
+        yield sse("status", message="正在识别问题意图...")
+        
+        user_context = ""
+        if user_id:
+            try:
+                knowledge = self.long_term_memory.get_relevant_knowledge(user_id, question, top_k=3)
+                preferences = self.long_term_memory.get_all_preferences(user_id)
+                user_context = self._format_long_term_context(knowledge, preferences)
+            except Exception:
+                pass
+        
+        # 从 checkpointer 获取对话历史
+        config = {"configurable": {"thread_id": thread_id}}
+        try:
+            snapshot = self.graph.get_state(config)
+            existing_msgs = list(snapshot.values.get("messages", []))
+        except Exception:
+            existing_msgs = []
+        
+        temp_state: MasterAgentState = {
+            "messages": existing_msgs,
+            "user_question": question,
+            "intent": None,
+            "sql_result": None,
+            "analysis_result": None,
+            "search_result": None,
+            "final_answer": None,
+            "error": None,
+            "metadata": {"thread_id": thread_id, "user_id": user_id}
+        }
+        conversation_history = self._get_conversation_history(temp_state)
+        
+        intent_prompt = get_master_intent_prompt(question, conversation_history, user_context)
+        try:
+            raw = self.llm.invoke(intent_prompt)
+            intent_raw = self._llm_to_str(raw).strip().lower()
+            print(f"[意图识别] LLM 原始返回: {repr(intent_raw)}")
+            valid_intents = [
+                "simple_answer", "sql_only", "analysis_only",
+                "sql_and_analysis", "web_search", "search_and_sql"
+            ]
+            intent = "sql_only"
+            for vi in valid_intents:
+                if vi in intent_raw:
+                    intent = vi
+                    break
+        except Exception as e:
+            intent = "simple_answer"
+            err_msg = f"{type(e).__name__}: {e}"
+            print(f"[意图识别] LLM 调用失败: {err_msg}")
+            # 尝试获取更详细的错误信息（如 API 配额不足等）
+            if "FreeTierOnly" in str(e) or "Quota" in str(e):
+                err_msg = "通义千问 API 免费额度已用完，请在控制台开通付费或更换模型。"
+            elif "InvalidApiKey" in str(e) or "Unauthorized" in str(e):
+                err_msg = "DASHSCOPE_API_KEY 无效，请检查 API Key 是否正确。"
+            yield sse("error", message=f"LLM 调用失败: {err_msg}")
+        
+        yield sse("intent", intent=intent)
+        
+        # --- 搜索不可用时降级 ---
+        if intent in ("web_search", "search_and_sql") and not self.search_agent.available:
+            msg = "联网搜索功能暂未启用，请配置 TAVILY_API_KEY 环境变量后重启。申请地址：https://tavily.com"
+            yield sse("chunk", content=msg)
+            yield sse("done", answer=msg)
+            return
+        
+        sql_result = None
+        analysis_result = None
+        search_result = None
+        final_answer = ""
+        
+        # --- 执行各子任务 ---
+        if intent == "simple_answer":
+            yield sse("status", message="正在生成回答...")
+            final_answer = (
+                "你好！我是智能数据查询助手，可以帮你查询数据库信息、"
+                "进行数据分析，还支持联网搜索。有什么可以帮你的吗？"
+            )
+            yield sse("chunk", content=final_answer)
+        
+        else:
+            # SQL 查询（适用于 sql_only / sql_and_analysis / search_and_sql）
+            if intent in ("sql_only", "sql_and_analysis", "search_and_sql"):
+                yield sse("status", message="正在查询数据库...")
+                sql_result = self.sql_agent.query(question)
+                
+                if sql_result.get("sql"):
+                    yield sse(
+                        "sql",
+                        sql=sql_result["sql"],
+                        retry_count=sql_result.get("retry_count", 0)
+                    )
+                if sql_result.get("error"):
+                    yield sse("error", message=f"数据库查询出错: {sql_result['error']}")
+                
+                # 保存会话数据
+                if thread_id not in self.session_data:
+                    self.session_data[thread_id] = {}
+                self.session_data[thread_id]["last_sql_result"] = sql_result
+            
+            # 数据分析（适用于 analysis_only / sql_and_analysis）
+            if intent in ("analysis_only", "sql_and_analysis"):
+                yield sse("status", message="正在分析数据...")
+                
+                data_to_analyze = None
+                if sql_result and sql_result.get("data"):
+                    data_to_analyze = sql_result["data"]
+                elif thread_id in self.session_data:
+                    last = self.session_data[thread_id].get("last_sql_result", {})
+                    data_to_analyze = last.get("data") if last else None
+                
+                if data_to_analyze:
+                    analysis_result = self.analysis_agent.analyze(data_to_analyze, question)
+                    if analysis_result.get("chart"):
+                        yield sse("chart", config=analysis_result["chart"])
+                else:
+                    yield sse("error", message="没有可分析的数据，请先执行数据查询")
+            
+            # 纯联网搜索
+            if intent == "web_search":
+                yield sse("status", message="正在联网搜索...")
+                search_result = self.search_agent.search(question)
+                if search_result.get("sources"):
+                    yield sse("sources", sources=search_result["sources"])
+                if search_result.get("error"):
+                    yield sse("error", message=search_result["error"])
+            
+            # 搜索 + 数据库联合分析
+            if intent == "search_and_sql":
+                yield sse("status", message="正在联网搜索行业数据...")
+                sql_data_str = (sql_result.get("data") or "{}") if sql_result else "{}"
+                search_result = self.search_agent.search_and_compare(question, sql_data_str)
+                if search_result.get("sources"):
+                    yield sse("sources", sources=search_result["sources"])
+                if search_result.get("error"):
+                    yield sse("error", message=search_result["error"])
+            
+            # --- 生成最终回答（流式输出 LLM 结果）---
+            yield sse("status", message="正在生成回答...")
+            
+            if intent in ("web_search", "search_and_sql") and search_result:
+                # 搜索智能体已生成完整回答，直接流式输出
+                answer_text = search_result.get("answer", "未能获取搜索结果")
+                if search_result.get("error"):
+                    answer_text = f"搜索出错：{search_result['error']}"
+                else:
+                    sources = search_result.get("sources", [])
+                    if sources:
+                        answer_text += "\n\n**参考来源：**\n" + "\n".join(
+                            f"- {url}" for url in sources[:5]
+                        )
+                final_answer = answer_text
+                yield sse("chunk", content=final_answer)
+            
+            elif sql_result and sql_result.get("error"):
+                final_answer = f"数据库查询出错：{sql_result['error']}"
+                yield sse("chunk", content=final_answer)
+            
+            else:
+                # 使用 LLM 流式生成汇总回答
+                sql_data = sql_result.get("data") if sql_result else None
+                analysis_data = analysis_result.get("analysis") if analysis_result else None
+                
+                summary_prompt = get_summary_prompt(
+                    question=question,
+                    sql_result=sql_data,
+                    analysis_result=analysis_data
+                )
+                
+                try:
+                    import re
+                    in_think = False
+                    think_buffer = ""
+                    for chunk in self.llm.stream(summary_prompt):
+                        if isinstance(chunk, str):
+                            chunk_text = chunk
+                        elif hasattr(chunk, 'content'):
+                            chunk_text = chunk.content
+                        elif hasattr(chunk, 'text'):
+                            chunk_text = chunk.text
+                        else:
+                            chunk_text = str(chunk)
+                        
+                        # 过滤 <think>...</think> 思考内容，不发送给前端
+                        think_buffer += chunk_text
+                        if '<think>' in think_buffer and not in_think:
+                            in_think = True
+                        if in_think:
+                            if '</think>' in think_buffer:
+                                cleaned = re.sub(r'<think>[\s\S]*?</think>', '', think_buffer).strip()
+                                if cleaned:
+                                    final_answer += cleaned
+                                    yield sse("chunk", content=cleaned)
+                                think_buffer = ""
+                                in_think = False
+                            continue
+                        
+                        think_buffer = ""
+                        final_answer += chunk_text
+                        yield sse("chunk", content=chunk_text)
+                except Exception as e:
+                    raw = self.llm.invoke(summary_prompt)
+                    final_answer = self._llm_to_str(raw)
+                    yield sse("chunk", content=final_answer)
+        
+        yield sse("done", answer=final_answer)
+        
+        # --- 保存对话历史到 LangGraph checkpointer ---
+        try:
+            new_messages = [HumanMessage(content=question), AIMessage(content=final_answer)]
+            self.graph.update_state(
+                config,
+                {"messages": new_messages},
+                as_node="summarize"
+            )
+            all_msgs = existing_msgs + new_messages
+            if user_id:
+                self._extract_and_save_memory(all_msgs, user_id)
+        except Exception as e:
+            print(f"保存对话历史失败（不影响本次回答）: {e}")
 
