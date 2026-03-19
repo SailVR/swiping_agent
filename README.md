@@ -4,6 +4,8 @@
 
 基于 LangGraph 的**一主三从**多智能体架构，支持自然语言数据查询、深度分析、**联网搜索**、数据可视化和长短期记忆。
 
+https://github.com/user-attachments/assets/597693d0-df09-4198-93bd-242497f23e09
+
 ## 架构设计
 
 ```
