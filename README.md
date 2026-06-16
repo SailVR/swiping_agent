@@ -18,14 +18,14 @@ MultiAgentSystem (agent.py)
 
 ### 意图路由（6 种）
 
-| 意图 | 触发场景 | 调用链路 |
-|------|---------|---------|
-| `simple_answer` | 问候/闲聊 | 主智能体直接回答 |
-| `sql_only` | 纯数据查询 | SQLQueryAgent（NL2SQL → MCP 执行 → 汇总） |
-| `analysis_only` | 分析已有结果 | DataAnalysisAgent（复用最近一次 SQL 结果） |
-| `sql_and_analysis` | 查询 + 深度分析 | SQLQueryAgent → DataAnalysisAgent |
-| `web_search` | 联网信息检索 | WebSearchAgent（Tavily → LLM 综合） |
-| `search_and_sql` | 内外部数据对比 | SQL 查询 + Tavily 搜索 → LLM 联合分析 |
+| 意图                 | 触发场景        | 调用链路                                    |
+| -------------------- | --------------- | ------------------------------------------- |
+| `simple_answer`    | 问候/闲聊       | 主智能体直接回答                            |
+| `sql_only`         | 纯数据查询      | SQLQueryAgent（NL2SQL → MCP 执行 → 汇总） |
+| `analysis_only`    | 分析已有结果    | DataAnalysisAgent（复用最近一次 SQL 结果）  |
+| `sql_and_analysis` | 查询 + 深度分析 | SQLQueryAgent → DataAnalysisAgent          |
+| `web_search`       | 联网信息检索    | WebSearchAgent（Tavily → LLM 综合）        |
+| `search_and_sql`   | 内外部数据对比  | SQL 查询 + Tavily 搜索 → LLM 联合分析      |
 
 ---
 
@@ -51,9 +51,9 @@ MultiAgentSystem (agent.py)
 
 ### 4. 双层记忆系统
 
-| 记忆层 | 技术 | 功能 |
-|--------|------|------|
-| **短期记忆** | LangGraph MemorySaver | 会话内对话历史保留；消息 > 10 条或 token > 1000 时 LLM 自动压缩总结 |
+| 记忆层             | 技术                              | 功能                                                                                                                 |
+| ------------------ | --------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| **短期记忆** | LangGraph MemorySaver             | 会话内对话历史保留；消息 > 10 条或 token > 1000 时 LLM 自动压缩总结                                                  |
 | **长期记忆** | SQLite（`long_term_memory.db`） | 跨会话持久化（`users`、`user_preferences`、`user_knowledge` 三张表）；对话 ≥ 6 条消息时自动提取用户偏好和知识 |
 
 ### 5. 数据导出（Export）
@@ -65,15 +65,15 @@ MultiAgentSystem (agent.py)
 
 前端接收 7 种 SSE 事件类型：
 
-| 事件类型 | 说明 |
-|---------|------|
-| `status` | 当前处理步骤描述 |
-| `intent` | 识别出的意图标签 |
-| `sql` | 生成的 SQL 语句 |
-| `sources` | 搜索来源 URL 列表 |
-| `chart` | ECharts 图表配置 JSON |
-| `chunk` | 回答文字流片段 |
-| `done` | 完成信号 |
+| 事件类型    | 说明                  |
+| ----------- | --------------------- |
+| `status`  | 当前处理步骤描述      |
+| `intent`  | 识别出的意图标签      |
+| `sql`     | 生成的 SQL 语句       |
+| `sources` | 搜索来源 URL 列表     |
+| `chart`   | ECharts 图表配置 JSON |
+| `chunk`   | 回答文字流片段        |
+| `done`    | 完成信号              |
 
 ---
 
@@ -136,11 +136,11 @@ python agent.py
 
 ### 5. 命令行特殊命令
 
-| 命令 | 功能 |
-|------|------|
-| `new` | 新会话（清空短期记忆，保留长期记忆） |
-| `info` | 查看当前用户信息和偏好 |
-| `exit` / `quit` | 退出系统 |
+| 命令                | 功能                                 |
+| ------------------- | ------------------------------------ |
+| `new`             | 新会话（清空短期记忆，保留长期记忆） |
+| `info`            | 查看当前用户信息和偏好               |
+| `exit` / `quit` | 退出系统                             |
 
 ---
 
@@ -148,56 +148,62 @@ python agent.py
 
 `credit_bonus.db`（信用卡刷卡金业务数据集）：
 
-| 表名 | 说明 | 数据量 |
-|------|------|--------|
-| `user_info` | 用户信息（姓名、手机、等级、开卡时间） | 80 个模拟用户 |
-| `card_transaction` | 信用卡交易流水（金额、商户类型、时间） | ~500 条，涵盖 8 种商户类型 |
-| `cash_bonus_record` | 刷卡金发放记录（每笔交易的返现/活动赠送） | 关联每笔交易 |
-| `cash_bonus_usage` | 刷卡金核销记录 | 使用明细 |
-| `activity_config` | 活动配置表 | 5 个活动 |
+| 表名                  | 说明                                      | 数据量                     |
+| --------------------- | ----------------------------------------- | -------------------------- |
+| `user_info`         | 用户信息（姓名、手机、等级、开卡时间）    | 80 个模拟用户              |
+| `card_transaction`  | 信用卡交易流水（金额、商户类型、时间）    | ~500 条，涵盖 8 种商户类型 |
+| `cash_bonus_record` | 刷卡金发放记录（每笔交易的返现/活动赠送） | 关联每笔交易               |
+| `cash_bonus_usage`  | 刷卡金核销记录                            | 使用明细                   |
+| `activity_config`   | 活动配置表                                | 5 个活动                   |
 
 ---
 
 ## REST API
 
-| 接口 | 方法 | 说明 |
-|------|------|------|
-| `/` | GET | Web 前端页面 |
-| `/api/login` | POST | 用户登录，返回长期记忆偏好和知识 |
-| `/api/query` | POST | 阻塞式查询接口 |
-| `/api/query_stream` | POST | **流式 SSE 接口（推荐）** |
-| `/api/new_session` | POST | 新建会话 |
-| `/api/user_info` | POST | 获取用户信息和知识列表 |
-| `/api/export` | POST | 导出最新查询结果（Excel/PDF） |
-| `/api/health` | GET | 健康检查 |
+| 接口                  | 方法 | 说明                             |
+| --------------------- | ---- | -------------------------------- |
+| `/`                 | GET  | Web 前端页面                     |
+| `/api/login`        | POST | 用户登录，返回长期记忆偏好和知识 |
+| `/api/query`        | POST | 阻塞式查询接口                   |
+| `/api/query_stream` | POST | **流式 SSE 接口（推荐）**  |
+| `/api/new_session`  | POST | 新建会话                         |
+| `/api/user_info`    | POST | 获取用户信息和知识列表           |
+| `/api/export`       | POST | 导出最新查询结果（Excel/PDF）    |
+| `/api/health`       | GET  | 健康检查                         |
 
 ---
 
 ## 测试问题示例
 
 **简单问答**
+
 - 你好，你能帮我做什么？
 - 介绍一下系统能查询哪些数据
 
 **数据查询**
+
 - 总共有多少个用户？他们的等级分布如何？
 - 查询所有餐饮类交易，按金额降序排列
 - 哪些用户的刷卡金总额超过 500 元？
 
 **查询 + 分析**
+
 - 对比不同商户类型的交易金额分布
 - 分析近 30 天交易趋势，给出图表
 - 找出刷卡金使用率最高的用户群体特征
 
 **仅分析**
+
 - 帮我分析一下刚才的查询结果
 - 从上次的数据中能看到什么趋势？
 
 **联网搜索**
+
 - 2025 年信用卡行业的最新政策有哪些？
 - 目前银行刷卡金营销活动的主流玩法是什么？
 
 **搜索 + SQL 联合对比**
+
 - 我们平台的刷卡金使用率和行业平均水平相比怎么样？
 - 当前信用卡消费趋势和我们内部数据是否一致？
 
@@ -275,20 +281,20 @@ swiping_agent/
 
 ## 技术栈
 
-| 类别 | 技术 |
-|------|------|
-| 工作流编排 | LangGraph（StateGraph + MemorySaver） |
-| LLM 框架 | LangChain |
-| 大语言模型 | 通义千问（DashScope OpenAI 兼容接口） |
-| 联网搜索 | Tavily（via langchain-tavily） |
-| 数据库协议 | MCP（Model Context Protocol, stdio 传输） |
-| 数据存储 | SQLite |
-| Web 框架 | Flask + Flask-CORS |
-| 前端可视化 | ECharts 5, marked.js, highlight.js |
-| 数据导出 | openpyxl（Excel）, fpdf2（PDF） |
-| SQL 校验 | 正则白名单（只读查询，防注入） |
-| 终端美化 | Rich |
-| 日志 | 轮转文件日志（logging.handlers.RotatingFileHandler） |
+| 类别       | 技术                                                 |
+| ---------- | ---------------------------------------------------- |
+| 工作流编排 | LangGraph（StateGraph + MemorySaver）                |
+| LLM 框架   | LangChain                                            |
+| 大语言模型 | 通义千问（DashScope OpenAI 兼容接口）                |
+| 联网搜索   | Tavily（via langchain-tavily）                       |
+| 数据库协议 | MCP（Model Context Protocol, stdio 传输）            |
+| 数据存储   | SQLite                                               |
+| Web 框架   | Flask + Flask-CORS                                   |
+| 前端可视化 | ECharts 5, marked.js, highlight.js                   |
+| 数据导出   | openpyxl（Excel）, fpdf2（PDF）                      |
+| SQL 校验   | 正则白名单（只读查询，防注入）                       |
+| 终端美化   | Rich                                                 |
+| 日志       | 轮转文件日志（logging.handlers.RotatingFileHandler） |
 
 ---
 
@@ -311,36 +317,6 @@ swiping_agent/
 - **数据导出**：Excel（带样式）+ PDF（自动中文检测） ✅ (v3.0)
 - **SQL 安全校验**：白名单只读校验 + 21 个测试用例 ✅ (v3.0)
 - **轮转日志**：5MB/文件、3 备份、自动抑制 httpx/openai 噪讯 ✅ (v3.0)
-
----
-
-## 更新日志
-
-### v3.0 (2026.03.10)
-- ✨ 新增：联网搜索子智能体 `WebSearchAgent`（Tavily）
-- ✨ 新增：`web_search` 和 `search_and_sql` 两种意图路由（共 6 种）
-- ✨ 新增：搜索+SQL 联合对比分析模式
-- ✨ 新增：搜索来源 URL 前端流式展示（`sources` SSE 事件）
-- ✨ 新增：数据导出模块 `export.py`（Excel + PDF）
-- ✨ 新增：SQL 安全校验器 `sql_validator.py`（双层校验）
-- ✨ 新增：轮转日志模块 `logger.py`
-- ✨ 新增：健康检查接口 `/api/health`、导出接口 `/api/export`
-- ✨ 新增：`/api/query_stream` SSE 流式查询接口
-- 🔧 全面架构升级：从"公司薪资"业务域重构为"信用卡刷卡金"业务域
-- 🔧 优化：搜索智能体不可用时自动降级并友好提示
-
-### v2.1 (2025.11.05)
-- ✨ 新增：内置 Web 前端（Markdown 渲染 + 代码高亮）
-- ✨ 新增：REST API（登录、查询、会话管理）
-- ✨ 新增：启动脚本 `start_web.bat` / `start_web.sh`
-
-### v2.0 (2025.10.21)
-- ✨ 新增：长期记忆系统（跨会话持久化）
-- ✨ 新增：短期记忆智能压缩（LLM 自动总结）
-- ✨ 新增：自动记忆提取（从对话中提取偏好和知识）
-
-### v1.0 (2025.10.16)
-- 🎉 初始版本：一主两从架构、NL2SQL、数据分析、短期记忆
 
 ---
 
