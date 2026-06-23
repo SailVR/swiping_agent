@@ -1,58 +1,37 @@
-# ===== Python =====
+# Environment
+.env
+.env.*
+!.env.example
+
+# Python cache / test cache
 __pycache__/
 *.py[cod]
 *$py.class
-*.so
-*.egg
-*.egg-info/
-.eggs/
-build/
-dist/
-wheels/
-MANIFEST
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
 
-# ===== 虚拟环境 =====
+# Virtual environments / packaging
+.venv/
 venv/
 env/
-ENV/
-.venv/
+dist/
+build/
+*.egg-info/
 
-# ===== 数据库文件（含用户隐私数据）=====
-*.db
-*.sqlite
-*.sqlite3
-data/company.db
-data/long_term_memory.db
-
-# ===== API Key / 环境变量（不上传密钥）=====
-.env
-.env.local
-.env.*.local
-
-# ===== IDE =====
-.vscode/
-.idea/
-*.swp
-*.swo
-*~
+# OS / editor
 .DS_Store
-Thumbs.db
+.idea/
+.vscode/
 
-# ===== 日志 =====
+# Runtime logs
+logs/
 *.log
 
-# ===== Jupyter =====
-.ipynb_checkpoints/
+# Local databases / runtime data
+data/*.db
+data/data/
 
-# ===== 测试覆盖率 =====
-htmlcov/
-.tox/
-.coverage
-.coverage.*
-.cache
-.pytest_cache/
-nosetests.xml
-coverage.xml
-
-# ===== 实验日志 =====
-swanlab/
+# Exported files
+*.xlsx
+*.pdf

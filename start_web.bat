@@ -1,7 +1,7 @@
 @echo off
 chcp 65001
 echo =====================================
-echo  多智能体数据查询系统 - Web界面启动
+echo  信用卡刷卡金数据分析系统 - Web界面启动
 echo =====================================
 echo.
 
@@ -20,7 +20,7 @@ echo 环境变量已设置
 echo.
 
 REM 检查数据库是否存在
-if not exist "data\company.db" (
+if not exist "data\credit_bonus.db" (
     echo [警告] 业务数据库不存在，正在初始化...
     cd data
     python init_db.py
@@ -43,7 +43,7 @@ echo.
 
 echo 正在启动Web服务器...
 echo.
-echo 访问地址: http://localhost:5000
+echo 访问地址: http://localhost:5001
 echo.
 echo 按 Ctrl+C 停止服务器
 echo =====================================
@@ -52,4 +52,3 @@ echo.
 python app.py
 
 pause
-

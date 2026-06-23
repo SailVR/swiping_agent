@@ -13,6 +13,9 @@ from langchain_core.language_models import BaseLLM
 import sys
 sys.path.append(str(Path(__file__).parent.parent))
 from prompts import get_analysis_prompt, get_chart_config_prompt
+from logger import get_logger
+
+logger = get_logger(__name__)
 
 
 class DataAnalysisAgent:
@@ -128,7 +131,7 @@ class DataAnalysisAgent:
             return None
             
         except Exception as e:
-            print(f"[图表生成] 图表配置生成失败（不影响分析结果）: {e}")
+            logger.warning("图表配置生成失败（不影响分析结果）: %s", e)
             return None
     
     def analyze(self, data: str, context: str = "") -> Dict[str, Any]:

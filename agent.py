@@ -1,11 +1,12 @@
 """
-LangGraph智能问答Agent - 多智能体版本
+信用卡刷卡金智能数据分析 Agent 系统。
 
-基于LangGraph工作流的自然语言数据库查询和分析系统。
-支持一主两从的多智能体架构：
-- 主智能体：MasterAgent（意图识别、路由、汇总）
-- 子智能体1：SQLQueryAgent（数据库查询）
-- 子智能体2：DataAnalysisAgent（数据分析）
+基于 LangGraph 工作流的自然语言数据查询和分析系统。
+支持一主三从的多智能体架构：
+- 主智能体：MasterAgent（意图识别、路由、汇总、记忆）
+- 子智能体1：SQLQueryAgent（NL2SQL 查询与自动纠错）
+- 子智能体2：DataAnalysisAgent（数据分析与 ECharts 可视化）
+- 子智能体3：WebSearchAgent（Tavily 联网搜索）
 
 支持长短期记忆：
 - 短期记忆：MemorySaver（会话内对话历史）
@@ -201,13 +202,13 @@ class MultiAgentSystem:
             "preferences": preferences
         }
 
-SQLAgent = MultiAgentSystem
+SQLAgent = MultiAgentSystem  # 兼容旧代码中的类名引用
 
 def main():
     console.print(Panel.fit(
-        "[cyan]LangGraph 多智能体数据查询系统 v2.1[/cyan]\n"
-        "主智能体 + SQL查询 + 数据分析 + Web前端\n"
-        "智能路由 · 深度分析 · 长短期记忆",
+        "[cyan]信用卡刷卡金智能数据分析 Agent 系统[/cyan]\n"
+        "一主三从 · NL2SQL · 数据分析 · 联网搜索\n"
+        "智能路由 · 流式回答 · 长短期记忆",
         border_style="cyan"
     ))
     console.print()
@@ -220,7 +221,7 @@ def main():
     agent = MultiAgentSystem()
     
     # 用户登录
-    console.print("[bold cyan]欢迎使用智能数据查询系统！[/bold cyan]")
+    console.print("[bold cyan]欢迎使用信用卡刷卡金智能数据分析系统！[/bold cyan]")
     user_id = Prompt.ask("[cyan]请输入用户ID（用于保存您的偏好和记忆）[/cyan]", default="guest")
     
     if agent.login(user_id):

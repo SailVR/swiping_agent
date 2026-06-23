@@ -1,7 +1,7 @@
 """
-基于FastMCP的SQL查询工具服务器
+基于 FastMCP 的只读 SQL 查询工具服务器。
 
-提供简单的SQL执行功能，方便扩展不同的数据源。
+为 SQLQueryAgent 提供 SQLite 查询执行能力，并在执行层做 SQL 安全校验。
 """
 
 import sqlite3
@@ -10,27 +10,38 @@ from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
 
+# SQL 安全校验
+from sql_validator import validate_sql
+
 # 创建FastMCP服务器
 mcp = FastMCP("sql-query-server")
 
 # 数据库配置
 DB_CONFIG = {
     "type": "sqlite",
-    "path": Path(__file__).parent / "data" / "company.db"
+    "path": Path(__file__).parent / "data" / "credit_bonus.db"
 }
 
 
 @mcp.tool()
 def execute_sql(sql: str) -> str:
     """执行SQL查询
-    
+
     Args:
         sql: SQL查询语句
-        db_type: 数据库类型（sqlite）
-        
+
     Returns:
         JSON格式的查询结果
     """
+    # ── SQL 安全校验：只允许 SELECT / WITH / EXPLAIN 等只读查询 ──
+    valid, reason = validate_sql(sql)
+    if not valid:
+        error_output = json.dumps({
+            "error": f"SQL 安全拦截: {reason}",
+            "sql": sql
+        }, ensure_ascii=False)
+        return error_output
+
     return _execute_sqlite(sql)
 
 
@@ -69,4 +80,3 @@ def _execute_sqlite(sql: str) -> str:
 
 if __name__ == "__main__":
     mcp.run()
-

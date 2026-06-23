@@ -1053,19 +1053,69 @@ body {
     .sidebar {
         display: none;
     }
-    
+
     .welcome-tips {
         flex-direction: column;
         gap: 16px;
     }
-    
+
     .message-content {
         max-width: 85%;
     }
-    
+
     .feature-list {
         grid-template-columns: 1fr;
         gap: 12px;
     }
+}
+
+/* ===== 导出工具栏 ===== */
+.stream-export-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 10px;
+    padding-top: 10px;
+    border-top: 1px solid var(--border-color);
+    flex-wrap: wrap;
+}
+
+.export-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 6px 14px;
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    background: var(--bg-secondary);
+    color: var(--text-secondary);
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all var(--transition-fast);
+    font-family: inherit;
+}
+
+.export-btn:hover {
+    background: var(--bg-tertiary);
+    border-color: var(--primary-color);
+    color: var(--primary-dark);
+    transform: translateY(-1px);
+}
+
+.export-btn:active {
+    transform: translateY(0);
+}
+
+.export-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    transform: none;
+}
+
+.export-hint {
+    font-size: 11px;
+    color: var(--text-tertiary);
+    margin-left: 4px;
 }
 

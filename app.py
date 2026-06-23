@@ -1,9 +1,10 @@
 """
-Flask Web API for Multi-Agent Data Query System
-提供RESTful API接口供前端调用，支持普通查询和流式SSE查询。
+信用卡刷卡金智能数据分析系统的 Flask Web API。
+
+提供 REST API、SSE 流式查询和查询结果导出接口。
 """
 
-from flask import Flask, request, jsonify, send_from_directory, Response, stream_with_context
+from flask import Flask, request, jsonify, send_from_directory, Response, stream_with_context, send_file
 from flask_cors import CORS
 import os
 import sys
@@ -16,10 +17,16 @@ sys.path.insert(0, os.path.dirname(__file__))
 from agent import MultiAgentSystem
 
 app = Flask(__name__, static_folder='static', static_url_path='')
-CORS(app)  # 允许跨域请求
+CORS(app)  # 本地前端调试时允许跨域请求
 
-# 全局系统实例（用于存储不同用户的会话）
+# 进程内用户会话缓存：适合本地 demo，多进程部署需替换为外部存储
 user_systems: Dict[str, MultiAgentSystem] = {}
+
+from dotenv import load_dotenv
+from logger import get_logger
+
+logger = get_logger(__name__)
+load_dotenv()  
 
 
 def get_or_create_system(user_id: str) -> MultiAgentSystem:
@@ -222,14 +229,106 @@ def health():
     })
 
 
+@app.route('/api/export', methods=['POST'])
+def export_data():
+    """导出查询结果（Excel / PDF）
+
+    请求体：
+        user_id: 用户 ID
+        format: 导出格式 "excel" 或 "pdf"（默认 excel）
+
+    返回文件下载响应。
+    """
+    from datetime import datetime
+    from export import export_to_excel, export_to_pdf
+
+    try:
+        data = request.json
+        user_id = data.get('user_id', 'guest')
+        export_format = data.get('format', 'excel')
+
+        system = get_or_create_system(user_id)
+        thread_id = f"{user_id}_{system.session_id}"
+
+        # 从会话数据中获取最近一次查询结果
+        session_data = system.master_agent.session_data
+        thread_data = session_data.get(thread_id, {})
+
+        sql_result = thread_data.get("last_sql_result", {}) or {}
+        search_result = thread_data.get("last_search_result") or {}
+        last_answer = thread_data.get("last_answer", "")
+        chart_config = thread_data.get("last_chart_config")
+
+        # 优先取 SQL 原生数据，其次搜索结果
+        data_json = ""
+        if sql_result.get("data") and not sql_result.get("error"):
+            data_json = sql_result["data"]
+        elif search_result.get("data"):
+            data_json = search_result["data"]
+
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+        if export_format == "excel":
+            buf = export_to_excel(data_json, chart_config=chart_config)
+            return send_file(
+                buf,
+                mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                as_attachment=True,
+                download_name=f"query_result_{timestamp}.xlsx"
+            )
+
+        elif export_format == "pdf":
+            buf = export_to_pdf(last_answer, data_json)
+            return send_file(
+                buf,
+                mimetype="application/pdf",
+                as_attachment=True,
+                download_name=f"query_report_{timestamp}.pdf"
+            )
+
+        else:
+            return jsonify({"success": False, "error": f"不支持的导出格式: {export_format}"}), 400
+
+    except ImportError as e:
+        return jsonify({
+            "success": False,
+            "error": f"导出功能缺少依赖库: {str(e)}。请执行: pip install openpyxl fpdf2"
+        }), 500
+    except Exception as e:
+        return jsonify({"success": False, "error": f"导出失败: {str(e)}"}), 500
+
+
+@app.route('/api/export_info', methods=['POST'])
+def export_info():
+    """查询当前会话是否有可导出的数据，供前端控制导出按钮显示。"""
+    try:
+        data = request.json
+        user_id = data.get('user_id', 'guest')
+
+        system = get_or_create_system(user_id)
+        thread_id = f"{user_id}_{system.session_id}"
+        thread_data = system.master_agent.session_data.get(thread_id, {})
+
+        has_data = thread_data.get("has_data", False)
+        has_answer = bool(thread_data.get("last_answer"))
+
+        return jsonify({
+            "success": True,
+            "has_data": has_data,
+            "has_answer": has_answer,
+            "can_export": has_data or has_answer
+        })
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
 if __name__ == '__main__':
     # 检查环境变量
     if not os.getenv("DASHSCOPE_API_KEY"):
-        print("错误：未设置 DASHSCOPE_API_KEY 环境变量")
+        logger.critical("未设置 DASHSCOPE_API_KEY 环境变量")
         sys.exit(1)
-    
-    print("🚀 多智能体数据查询系统 Web API 启动中...")
-    print("📡 访问地址: http://localhost:5000")
-    
-    app.run(host='0.0.0.0', port=5000, debug=True)
 
+    logger.info("信用卡刷卡金数据分析系统 Web API 启动中...")
+    logger.info("访问地址: http://localhost:5001")
+    
+    app.run(host='0.0.0.0', port=5001, debug=True)

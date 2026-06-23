@@ -23,6 +23,9 @@ from agents.analysis_agent import DataAnalysisAgent
 from agents.search_agent import WebSearchAgent
 from memory.long_term_memory import LongTermMemory
 from memory.memory_extractor import MemoryExtractor
+from logger import get_logger
+
+logger = get_logger(__name__)
 
 
 class MasterAgentState(TypedDict):
@@ -220,7 +223,7 @@ class MasterAgent:
             summary = self._llm_to_str(self.llm.invoke(prompt)).strip()
             return f"[对话历史总结]\n{summary}"
         except Exception as e:
-            print(f"压缩对话历史失败: {e}")
+            logger.warning("压缩对话历史失败: %s", e)
             # 如果压缩失败，返回最近的部分对话
             lines = history_text.split("\n")
             recent_lines = lines[-20:] if len(lines) > 20 else lines
@@ -270,7 +273,7 @@ class MasterAgent:
                 preferences = self.long_term_memory.get_all_preferences(user_id)
                 user_context = self._format_long_term_context(knowledge, preferences)
             except Exception as e:
-                print(f"获取长期记忆失败: {e}")
+                logger.warning("获取长期记忆失败: %s", e)
         
         prompt = get_master_intent_prompt(question, conversation_history, user_context)
         
@@ -304,7 +307,7 @@ class MasterAgent:
         intent = state.get("intent", "simple_answer")
         # 如果 web_search/search_and_sql 但搜索不可用，降级为 simple_answer
         if intent in ("web_search", "search_and_sql") and not self.search_agent.available:
-            print("[路由] 搜索智能体不可用，意图降级为 simple_answer")
+            logger.info("搜索智能体不可用，意图降级为 simple_answer")
             state["final_answer"] = (
                 "联网搜索功能暂未启用。请配置 TAVILY_API_KEY 环境变量后重启系统。\n"
                 "申请地址：https://tavily.com（免费账户即可）"
@@ -584,7 +587,7 @@ class MasterAgent:
         # 获取完整的对话历史（已经包含了当前的问题和回答）
         all_messages = list(final_state["messages"])
         
-        print(f"[记忆] 当前会话共有 {len(all_messages)} 条消息")
+        logger.info("当前会话共有 %d 条消息", len(all_messages))
         
         # 自动提取并保存长期记忆
         if user_id:
@@ -615,7 +618,7 @@ class MasterAgent:
                     knowledge.get("confidence", 0.8)
                 )
         except Exception as e:
-            print(f"提取记忆失败: {e}")
+            logger.warning("提取记忆失败: %s", e)
     
     def stream_query(
         self,
@@ -671,7 +674,7 @@ class MasterAgent:
         try:
             raw = self.llm.invoke(intent_prompt)
             intent_raw = self._llm_to_str(raw).strip().lower()
-            print(f"[意图识别] LLM 原始返回: {repr(intent_raw)}")
+            logger.debug("意图识别 LLM 原始返回: %r", intent_raw)
             valid_intents = [
                 "simple_answer", "sql_only", "analysis_only",
                 "sql_and_analysis", "web_search", "search_and_sql"
@@ -684,7 +687,7 @@ class MasterAgent:
         except Exception as e:
             intent = "simple_answer"
             err_msg = f"{type(e).__name__}: {e}"
-            print(f"[意图识别] LLM 调用失败: {err_msg}")
+            logger.error("意图识别 LLM 调用失败: %s", err_msg)
             # 尝试获取更详细的错误信息（如 API 配额不足等）
             if "FreeTierOnly" in str(e) or "Quota" in str(e):
                 err_msg = "通义千问 API 免费额度已用完，请在控制台开通付费或更换模型。"
@@ -698,7 +701,7 @@ class MasterAgent:
         if intent in ("web_search", "search_and_sql") and not self.search_agent.available:
             msg = "联网搜索功能暂未启用，请配置 TAVILY_API_KEY 环境变量后重启。申请地址：https://tavily.com"
             yield sse("chunk", content=msg)
-            yield sse("done", answer=msg)
+            yield sse("done", answer=msg, has_data=False)
             return
         
         sql_result = None
@@ -840,7 +843,22 @@ class MasterAgent:
                     final_answer = self._llm_to_str(raw)
                     yield sse("chunk", content=final_answer)
         
-        yield sse("done", answer=final_answer)
+        # ── 判断是否有表格数据可导出 ──
+        has_data = bool(
+            (sql_result and sql_result.get("data") and not sql_result.get("error"))
+            or (search_result and search_result.get("data"))
+        )
+
+        # ── 保存到会话数据存储（供导出功能使用） ──
+        if thread_id not in self.session_data:
+            self.session_data[thread_id] = {}
+        self.session_data[thread_id]["last_answer"] = final_answer
+        self.session_data[thread_id]["has_data"] = has_data
+        self.session_data[thread_id]["last_search_result"] = search_result
+        if analysis_result and analysis_result.get("chart"):
+            self.session_data[thread_id]["last_chart_config"] = analysis_result["chart"]
+
+        yield sse("done", answer=final_answer, has_data=has_data)
         
         # --- 保存对话历史到 LangGraph checkpointer ---
         try:
@@ -854,5 +872,5 @@ class MasterAgent:
             if user_id:
                 self._extract_and_save_memory(all_msgs, user_id)
         except Exception as e:
-            print(f"保存对话历史失败（不影响本次回答）: {e}")
+            logger.warning("保存对话历史失败（不影响本次回答）: %s", e)
 

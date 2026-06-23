@@ -19,6 +19,10 @@ from mcp.client.stdio import stdio_client
 
 sys.path.append(str(Path(__file__).parent.parent))
 from prompts import get_few_shot_prompt, get_sql_correction_prompt
+from sql_validator import validate_sql, assert_read_only
+from logger import get_logger
+
+logger = get_logger(__name__)
 
 
 class SQLQueryAgent:
@@ -209,6 +213,14 @@ class SQLQueryAgent:
                 result["error"] = "未能生成有效的SQL"
                 return result
             
+            # ── SQL 安全校验：执行前拦截危险语句 ──
+            try:
+                assert_read_only(sql)
+            except ValueError as e:
+                result["error"] = str(e)
+                result["sql"] = sql
+                return result
+
             for attempt in range(max_retries):
                 query_result = self._run_async(self._execute_sql_via_mcp(sql))
                 result_data = json.loads(query_result)
@@ -217,7 +229,7 @@ class SQLQueryAgent:
                     error_msg = result_data["error"]
                     
                     if attempt < max_retries - 1:
-                        print(f"[SQL纠错] 第{attempt + 1}次执行失败: {error_msg}，正在让LLM自动修复...")
+                        logger.info("SQL 第%d次执行失败: %s，正在让LLM自动修复...", attempt + 1, error_msg)
                         sql = self._correct_sql(question, sql, error_msg, attempt + 1)
                         result["sql"] = sql
                         result["retry_count"] = attempt + 1
@@ -226,7 +238,7 @@ class SQLQueryAgent:
                 else:
                     result["data"] = query_result
                     if attempt > 0:
-                        print(f"[SQL纠错] 第{attempt}次修复后执行成功")
+                        logger.info("SQL 第%d次修复后执行成功", attempt)
                     break
                     
         except Exception as e:

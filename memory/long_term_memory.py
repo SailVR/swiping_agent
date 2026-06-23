@@ -8,6 +8,9 @@ import sqlite3
 from datetime import datetime
 from typing import Dict, List, Optional, Any
 from pathlib import Path
+from logger import get_logger
+
+logger = get_logger(__name__)
 
 
 class LongTermMemory:
@@ -84,7 +87,7 @@ class LongTermMemory:
             conn.commit()
             return True
         except Exception as e:
-            print(f"创建/更新用户失败: {e}")
+            logger.error("创建/更新用户失败: %s", e)
             return False
         finally:
             conn.close()
@@ -131,7 +134,7 @@ class LongTermMemory:
             conn.commit()
             return True
         except Exception as e:
-            print(f"保存偏好失败: {e}")
+            logger.error("保存偏好失败: %s", e)
             return False
         finally:
             conn.close()
@@ -221,7 +224,7 @@ class LongTermMemory:
             conn.commit()
             return True
         except Exception as e:
-            print(f"保存知识失败: {e}")
+            logger.error("保存知识失败: %s", e)
             return False
         finally:
             conn.close()
@@ -344,7 +347,7 @@ class LongTermMemory:
             conn.commit()
             return True
         except Exception as e:
-            print(f"删除偏好失败: {e}")
+            logger.error("删除偏好失败: %s", e)
             return False
         finally:
             conn.close()
@@ -370,7 +373,7 @@ class LongTermMemory:
             conn.commit()
             return True
         except Exception as e:
-            print(f"删除知识失败: {e}")
+            logger.error("删除知识失败: %s", e)
             return False
         finally:
             conn.close()

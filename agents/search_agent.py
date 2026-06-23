@@ -16,6 +16,9 @@ from langchain_core.language_models import BaseLLM
 import sys
 sys.path.append(str(Path(__file__).parent.parent))
 from prompts import get_search_synthesis_prompt, get_search_and_sql_prompt
+from logger import get_logger
+
+logger = get_logger(__name__)
 
 
 class WebSearchAgent:
@@ -44,9 +47,7 @@ class WebSearchAgent:
         effective_key = api_key or os.getenv("TAVILY_API_KEY", "")
         
         if not effective_key or effective_key.startswith("${"):
-            print("[DeepSearch] 未配置 TAVILY_API_KEY，联网搜索功能不可用。")
-            print("[DeepSearch] 请在环境变量中设置 TAVILY_API_KEY 或在 config.yaml 中配置。")
-            print("[DeepSearch] 申请地址：https://tavily.com（免费额度充足）")
+            logger.warning("未配置 TAVILY_API_KEY，联网搜索功能不可用。请在环境变量中设置 TAVILY_API_KEY 或在 config.yaml 中配置。申请地址：https://tavily.com")
             return
         
         try:
@@ -54,11 +55,11 @@ class WebSearchAgent:
             from langchain_tavily import TavilySearch
             self.search_tool = TavilySearch(max_results=self.max_results)
             self.available = True
-            print("[DeepSearch] Tavily 搜索工具初始化成功")
+            logger.info("Tavily 搜索工具初始化成功")
         except ImportError:
-            print("[DeepSearch] langchain-tavily 未安装，请运行: pip install langchain-tavily")
+            logger.error("langchain-tavily 未安装，请运行: pip install langchain-tavily")
         except Exception as e:
-            print(f"[DeepSearch] 搜索工具初始化失败: {e}")
+            logger.error("搜索工具初始化失败: %s", e)
     
     def _format_search_results(self, results: List[Dict]) -> str:
         """格式化搜索结果为可读文本
@@ -150,7 +151,7 @@ class WebSearchAgent:
             return result
         
         try:
-            print(f"[DeepSearch] 正在搜索: {question}")
+            logger.info("正在搜索: %s", question[:80])
             formatted_text, sources = self._invoke_search(question)
             result["sources"] = sources
             
@@ -163,11 +164,11 @@ class WebSearchAgent:
             text = re.sub(r'</think>', '', text).strip()
             result["answer"] = text
             
-            print(f"[DeepSearch] 搜索完成，来源 {len(sources)} 个")
+            logger.info("搜索完成，来源 %d 个", len(sources))
             
         except Exception as e:
             result["error"] = f"联网搜索失败: {str(e)}"
-            print(f"[DeepSearch] 搜索出错: {e}")
+            logger.error("搜索出错: %s", e)
         
         return result
     
@@ -199,7 +200,7 @@ class WebSearchAgent:
             return result
         
         try:
-            print(f"[DeepSearch] 联合分析搜索: {question}")
+            logger.info("联合分析搜索: %s", question[:80])
             formatted_text, sources = self._invoke_search(question)
             result["sources"] = sources
             
@@ -212,10 +213,10 @@ class WebSearchAgent:
             text = re.sub(r'</think>', '', text).strip()
             result["answer"] = text
             
-            print(f"[DeepSearch] 联合分析完成")
+            logger.info("联合分析完成")
             
         except Exception as e:
             result["error"] = f"联合搜索分析失败: {str(e)}"
-            print(f"[DeepSearch] 联合分析出错: {e}")
+            logger.error("联合分析出错: %s", e)
         
         return result

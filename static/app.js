@@ -246,6 +246,15 @@ function createStreamingMessage() {
                 <div class="stream-sources" id="${msgId}_sources" style="display:none;"></div>
                 <div class="markdown-body stream-answer" id="${msgId}_answer"></div>
                 <div class="stream-chart" id="${msgId}_chart" style="display:none;"></div>
+                <div class="stream-export-toolbar" id="${msgId}_export" style="display:none;">
+                    <button class="export-btn export-excel" onclick="handleExport('excel')">
+                        📥 导出 Excel
+                    </button>
+                    <button class="export-btn export-pdf" onclick="handleExport('pdf')">
+                        📄 导出 PDF
+                    </button>
+                    <span class="export-hint">导出当前查询结果</span>
+                </div>
             </div>
             <div class="message-time">${timeStr}</div>
         </div>
@@ -331,10 +340,33 @@ function createStreamingMessage() {
             el.id = `${msgId}_chart_canvas`;
             renderChart(el, chartConfig);
         },
-        
-        finalize(fullAnswer) {
+
+        showExportButtons(hasData) {
+            // hasData: true 表示有表格数据可导出（显示两个按钮）
+            // false 时只显示 PDF 导出（导出回答文本）
+            const el = document.getElementById(`${msgId}_export`);
+            if (!el) return;
+
+            if (hasData) {
+                // 有数据 → 显示 Excel + PDF 两个按钮
+                el.style.display = 'flex';
+            } else {
+                // 无数据 → 只显示 PDF 导出按钮
+                const excelBtn = el.querySelector('.export-excel');
+                const pdfBtn = el.querySelector('.export-pdf');
+                if (excelBtn) excelBtn.style.display = 'none';
+                if (pdfBtn) pdfBtn.style.display = 'inline-flex';
+                el.style.display = 'flex';
+            }
+        },
+
+        finalize(fullAnswer, hasData) {
             this.hideStatus();
             AppState.messageHistory.push({ text: fullAnswer, isUser: false, time: timeStr });
+            // 有答案就显示导出按钮
+            if (fullAnswer) {
+                this.showExportButtons(hasData);
+            }
         }
     };
 }
@@ -378,6 +410,63 @@ function escapeHtml(text) {
     const div = document.createElement('div');
     div.textContent = text;
     return div.innerHTML.replace(/\n/g, '<br>');
+}
+
+// ===== 导出功能 =====
+
+async function handleExport(format) {
+    /** 导出查询结果为 Excel 或 PDF
+     * @param {'excel'|'pdf'} format
+     */
+    if (AppState.isLoading) {
+        alert('请等待当前查询完成后再导出');
+        return;
+    }
+
+    const formatNames = { excel: 'Excel', pdf: 'PDF' };
+    const extMap = { excel: 'xlsx', pdf: 'pdf' };
+    const fileName = `query_result.${extMap[format] || format}`;
+
+    try {
+        // 禁用按钮，防止重复点击
+        const buttons = document.querySelectorAll('.export-btn');
+        buttons.forEach(b => b.disabled = true);
+
+        const response = await fetch(`${API_BASE_URL}/api/export`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                user_id: AppState.userId,
+                format: format
+            })
+        });
+
+        if (!response.ok) {
+            const err = await response.json();
+            throw new Error(err.error || '导出失败');
+        }
+
+        // 触发浏览器下载
+        const blob = await response.blob();
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = fileName;
+        document.body.appendChild(a);
+        a.click();
+
+        // 清理
+        setTimeout(() => {
+            document.body.removeChild(a);
+            window.URL.revokeObjectURL(url);
+        }, 100);
+    } catch (error) {
+        alert(`导出失败: ${error.message}`);
+        console.error('导出错误:', error);
+    } finally {
+        const buttons = document.querySelectorAll('.export-btn');
+        buttons.forEach(b => b.disabled = false);
+    }
 }
 
 // ===== 查询处理（流式版本）=====
@@ -488,7 +577,8 @@ async function handleQuery(question) {
                             if (pendingChart) {
                                 streamMsg.showChart(pendingChart);
                             }
-                            streamMsg.finalize(fullAnswer);
+                            // 传递 has_data 标记，供导出按钮显示判断
+                            streamMsg.finalize(fullAnswer, event.has_data === true);
                             break;
                     }
                 } catch (parseErr) {
@@ -701,6 +791,6 @@ window.AppDebug = {
     handleNewSession
 };
 
-console.log('🚀 多智能体数据查询系统前端 v3.0 已加载');
+console.log('🚀 信用卡刷卡金数据分析系统前端 v3.0 已加载');
 console.log('✨ 新特性: SSE流式响应 | DeepSearch联网搜索 | ECharts可视化 | SQL自动纠错');
 console.log('💡 提示：可以通过 window.AppDebug 访问调试API');
